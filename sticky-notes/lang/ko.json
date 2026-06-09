@@ -1,0 +1,17 @@
+{
+  "STICKYNOTES.Title": "스티커 메모",
+  "STICKYNOTES.Settings": "설정",
+  "STICKYNOTES.Edit": "편집",
+  "STICKYNOTES.Delete": "삭제",
+  "STICKYNOTES.Done": "완료",
+  "STICKYNOTES.Cancel": "취소",
+  "STICKYNOTES.AddImage": "이미지 레이어 추가",
+  "STICKYNOTES.TextLayer": "텍스트",
+  "STICKYNOTES.ImageLayer": "이미지",
+  "STICKYNOTES.Opacity": "불투명도",
+  "STICKYNOTES.ConfirmDelete": "이 메모를 삭제하시겠습니까?",
+  "STICKYNOTES.BGColor": "배경색",
+  "STICKYNOTES.TextColor": "글자색",
+  "STICKYNOTES.FontSize": "글자 크기",
+  "STICKYNOTES.ToolTip": "스티커 메모 그리기"
+}

@@ -1,0 +1,24 @@
+{
+  "id": "sticky-notes",
+  "title": "Sticky Notes",
+  "description": "씬에 스티커 메모를 붙일 수 있는 모듈. 포토샵 스타일 드로잉 도구 포함. 씬 전환 후에도 유지됩니다.",
+  "version": "2.0.0",
+  "compatibility": {
+    "minimum": "13",
+    "verified": "14"
+  },
+  "authors": [
+    { "name": "JCG" }
+  ],
+  "esmodules": [
+    "scripts/main.mjs"
+  ],
+  "styles": [
+    "styles/sticky-notes.css"
+  ],
+  "languages": [
+    { "lang": "ko", "name": "한국어", "path": "lang/ko.json" },
+    { "lang": "en", "name": "English", "path": "lang/en.json" }
+  ],
+  "socket": true
+}
