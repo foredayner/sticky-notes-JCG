@@ -1,0 +1,17 @@
+{
+  "STICKYNOTES.Title": "Sticky Note",
+  "STICKYNOTES.Settings": "Settings",
+  "STICKYNOTES.Edit": "Edit",
+  "STICKYNOTES.Delete": "Delete",
+  "STICKYNOTES.Done": "Done",
+  "STICKYNOTES.Cancel": "Cancel",
+  "STICKYNOTES.AddImage": "Add Image Layer",
+  "STICKYNOTES.TextLayer": "Text",
+  "STICKYNOTES.ImageLayer": "Image",
+  "STICKYNOTES.Opacity": "Opacity",
+  "STICKYNOTES.ConfirmDelete": "Delete this sticky note?",
+  "STICKYNOTES.BGColor": "Background Color",
+  "STICKYNOTES.TextColor": "Text Color",
+  "STICKYNOTES.FontSize": "Font Size",
+  "STICKYNOTES.ToolTip": "Draw Sticky Note"
+}
