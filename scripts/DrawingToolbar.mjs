@@ -38,7 +38,7 @@ export class DrawingToolbar {
     this.owner      = owner;
     this.el         = null;
     this.optBar     = null;
-    this.activeTool = TOOLS.PEN;
+    this.activeTool = null;  // 1: 기본값 null (아무것도 선택 안 함)
 
     this.opts = {
       color:"#e05555", opacity:1.0, smoothing:true,
@@ -301,19 +301,31 @@ export class DrawingToolbar {
         e.stopPropagation();
         const toolId = btn.dataset.tool;
 
-        // 편집 버튼 — 색상 피커 대신 편집 패널 팝업
+        // 편집 버튼
         if (toolId === "edit") {
           this.owner._toggleEditPanel?.(btn);
-          // 3: 편집 진입 시 기존 도구 선택 해제
           wrap.querySelectorAll(".sn-tool-btn").forEach(b => b.classList.remove("active"));
           btn.classList.add("active");
           return;
         }
 
+        // 3: 다른 도구 선택 시 편집 팝업 닫기
+        if (this.owner._editPanelOpen) {
+          this.owner._editPanelPopup?.remove();
+          this.owner._editPanelPopup = null;
+          this.owner._editPanelOpen  = false;
+          this.owner._removeRotatePivot?.();
+        }
+
+        // 2: 이미 선택된 도구를 다시 누르면 선택 해제 (null로)
+        if (this.activeTool === toolId) {
+          this.selectTool(null);
+          this.owner._closeColorPicker?.();
+          return;
+        }
+
         this.selectTool(toolId);
-        // 4: 다른 도구 선택 시 축점 제거
         this.owner._removeRotatePivot?.();
-        // 색상 도구면 피커 열기, 아니면 피커 닫기
         if (COLOR_TOOLS.has(toolId)) {
           this.owner._openColorPickerAt?.(btn);
         } else {
@@ -402,16 +414,24 @@ export class DrawingToolbar {
   }
 
   selectTool(toolId) {
+    // 1: 텍스트 편집 중이면 취소 (툴 변경)
+    if (this.owner._textEditing) {
+      if (this.owner._textOutsideHandler) {
+        document.removeEventListener("mousedown", this.owner._textOutsideHandler, true);
+        this.owner._textOutsideHandler = null;
+      }
+      this.owner._cancelTextLayer?.();  // 툴 클릭 → 취소
+    }
+
     this.activeTool = toolId;
     this.el?.querySelectorAll(".sn-tool-btn").forEach(b =>
       b.classList.toggle("active", b.dataset.tool === toolId));
     this.el?.querySelectorAll(".sn-tool-color-dot").forEach(d =>
       d.classList.toggle("active-tool", d.dataset.tool === toolId));
     this._renderOptBar(toolId);
-    this.owner.drawCanvas?.setTool(toolId, this.opts);
-    // 다른 도구 선택 시 크기조절 취소
+    this.owner.drawCanvas?.setTool(toolId ?? null, this.opts);
     if (this.owner._resizeOverlay) this.owner._cancelResizeHandles?.();
-    // 편집 프리뷰 취소 (스냅으로 복원)
+    // 편집 프리뷰 취소
     if (this.owner._editSnapCanvas && this.owner.layerMgr) {
       const canvas = this.owner.layerMgr.activeCanvas;
       if (canvas) {

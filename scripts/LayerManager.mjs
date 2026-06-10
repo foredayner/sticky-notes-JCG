@@ -91,15 +91,17 @@ export class LayerManager {
     ctx.font        = `${td.italic?"italic ":""}${td.bold?"bold ":""}${td.size}px ${td.font}`;
     ctx.fillStyle   = td.color ?? "#333";
     ctx.globalAlpha = td.opacity ?? 1;
-    ctx.textAlign   = td.align ?? "left";
+    ctx.textAlign    = td.align ?? "left";
+    ctx.textBaseline = "top";  // div top과 동일 기준
     const lh = td.size * ((td.lineHeight ?? 160) / 100);
+    // td.y = 텍스트 박스 상단 (CSS div top과 동일)
     (td.text ?? "").split("\n").forEach((line, i) => {
-      const ty = td.y + td.size + i * lh;
+      const ty = td.y + i * lh;
       ctx.fillText(line, td.x, ty);
       if (td.underline) {
         const w  = ctx.measureText(line).width;
         const ux = td.align === "center" ? td.x - w/2 : td.align === "right" ? td.x - w : td.x;
-        ctx.fillRect(ux, ty + 2, w, 1);
+        ctx.fillRect(ux, ty + td.size * 0.9, w, Math.max(1, td.size * 0.07));
       }
     });
     ctx.restore();

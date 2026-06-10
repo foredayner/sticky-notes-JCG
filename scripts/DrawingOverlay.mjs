@@ -237,6 +237,7 @@ export class DrawingOverlay {
     const h = Math.max(10, Math.round(d.height * dpr));
 
     this.layerMgr = new LayerManager(w, h, d.bgColor);
+    this._initBgColor = d.bgColor;  // 4: 취소 시 복원용
     this.layerMgr.onUpdate = () => {
       this._refreshLayerUI();
       this._compositeToDOM();
@@ -329,8 +330,17 @@ export class DrawingOverlay {
     overlayMount.appendChild(this.drawCanvas.drawCanvas);
     overlayMount.appendChild(this.drawCanvas.overlayCanvas);
     this.drawCanvas._bindEvents();
-    // saveInitialSnap은 _initLayerManager에서 그림 로드 완료 후 호출됨
-    // (기존 그림 없으면 즉시, 있으면 img.onload 후)
+    // 이동 도구 + 텍스트 레이어 mousedown 가로채기
+    this.drawCanvas.overlayCanvas.addEventListener("mousedown", e => {
+      if (e.button !== 0) return;
+      if (this.toolbar?.activeTool !== "move") return;
+      const layer = this.layerMgr?.activeLayer;
+      if (!layer || layer.type !== "text") return;
+      e.stopPropagation();
+      e.stopImmediatePropagation();  // DrawingCanvas._onDown 완전 차단
+      const p = this.drawCanvas._pos(e);
+      this._startTextLayerMove(this.layerMgr._activeIdx, p.x, p.y);
+    }, true);
 
     this.drawCanvas.onHistoryChange = () => {
       this._refreshHistoryUI();
@@ -339,6 +349,7 @@ export class DrawingOverlay {
     this.drawCanvas.onColorUsed = (hex) => {
       if (this.colorPicker) { this.colorPicker._saveRecentColor(hex); this.colorPicker._renderRecent(); }
     };
+    this.drawCanvas.onLayerUndo = () => this._undoLayerOp();
   }
 
   /* ══ 핸들 기반 크기조절
@@ -502,12 +513,14 @@ export class DrawingOverlay {
     const canvas = layer.canvas;
     const ctx = canvas.getContext("2d");
     ctx.clearRect(0, 0, canvas.width, canvas.height);
-    ctx.drawImage(bakCanvas, 0, 0);  // 원본 복원
+    ctx.drawImage(bakCanvas, 0, 0);
     if (orig.x !== cur.x || orig.y !== cur.y || orig.w !== cur.w || orig.h !== cur.h) {
       ctx.clearRect(orig.x, orig.y, orig.w, orig.h);
       ctx.drawImage(bakCanvas, orig.x, orig.y, orig.w, orig.h, cur.x, cur.y, cur.w, cur.h);
     }
-    this.layerMgr.onUpdate?.();
+
+    // onUpdate 대신 compositeToDOM만 직접 호출 (레이어 UI 갱신 없이)
+    this._compositeToDOM();
   }
 
   _commitResizeHandles() {
@@ -566,6 +579,20 @@ export class DrawingOverlay {
       _editMode: true,
       get drawCanvas() { return null; },
       onTextClick: (x, y, e) => this.onTextClick(x, y, e),
+      onTextLayerMove: (p, phase) => {
+        // 현재 활성 레이어가 텍스트 레이어일 때만 처리
+        const layer = this.layerMgr?.activeLayer;
+        if (!layer || layer.type !== "text") return false;
+        if (phase === "start") {
+          this._textMoveOrigX = layer.textData?.x ?? 0;
+          this._textMoveOrigY = layer.textData?.y ?? 0;
+          this._textMoveStartX = p.x;
+          this._textMoveStartY = p.y;
+          this._isMovingText = true;
+          return true;
+        }
+        return this._isMovingText ?? false;
+      },
       _addDrawingLayerFromCanvas: (canvasEl, x, y) => {
         this.drawCanvas?.baseCtx.drawImage(canvasEl, x, y);
       }
@@ -575,16 +602,27 @@ export class DrawingOverlay {
   _switchActiveLayer(idx) {
     const layer = this.layerMgr.layers[idx];
     if (layer?.type === "text") {
+      // 1: 텍스트 레이어 선택 → 텍스트 편집 진입
+      if (this.drawCanvas) {
+        this.drawCanvas.overlayCanvas.style.pointerEvents = "none";
+        this.drawCanvas.overlayCanvas.style.cursor = "default";
+      }
       this._enterTextLayerEdit(idx);
       return;
+    }
+
+    // 비텍스트 레이어로 전환 시 그리기 다시 활성화
+    if (this.drawCanvas && this.toolbar?.activeTool) {
+      this.drawCanvas.overlayCanvas.style.pointerEvents = "all";
     }
     // 4: 현재 레이어의 히스토리 저장
     if (this.drawCanvas && this.layerMgr._activeIdx !== idx) {
       const prevIdx = this.layerMgr._activeIdx;
       this._layerHistories = this._layerHistories ?? {};
       this._layerHistories[prevIdx] = {
-        history   : [...(this.drawCanvas.history    ?? [])],
-        undoStack : [...(this.drawCanvas._undoStack ?? [])],
+        history     : [...(this.drawCanvas.history      ?? [])],
+        undoStack   : [...(this.drawCanvas._undoStack   ?? [])],
+        initialSnap : this.drawCanvas._initialSnap ?? null,
       };
     }
 
@@ -593,16 +631,17 @@ export class DrawingOverlay {
     if (!canvas || !this.drawCanvas) return;
     this.drawCanvas.baseCanvas = canvas;
     this.drawCanvas.baseCtx    = canvas.getContext("2d");
-    this.drawCanvas.saveInitialSnap();
 
-    // 4: 전환된 레이어의 히스토리 복원
+    // 1: 히스토리 먼저 복원 후 snap 저장
     const saved = this._layerHistories?.[idx];
     if (saved) {
-      this.drawCanvas.history    = [...saved.history];
-      this.drawCanvas._undoStack = [...saved.undoStack];
+      this.drawCanvas.history      = [...saved.history];
+      this.drawCanvas._undoStack   = [...saved.undoStack];
+      this.drawCanvas._initialSnap = saved.initialSnap ?? null;
     } else {
-      this.drawCanvas.history    = [];
-      this.drawCanvas._undoStack = [];
+      this.drawCanvas.history      = [];
+      this.drawCanvas._undoStack   = [];
+      this.drawCanvas.saveInitialSnap();
     }
 
     this._refreshHistoryUI();
@@ -628,11 +667,10 @@ export class DrawingOverlay {
     this.toolbar.render(this.el.querySelector(".sno-toolbar-mount"));
     this.el.querySelector(".sno-optbar-mount").appendChild(this.toolbar.optBar);
     if (this.drawCanvas) {
-      this.drawCanvas.setTool(this.toolbar.activeTool, this.toolbar.opts);
-      this.drawCanvas.setColor(this.toolbar.opts.color);
+      // 1: 초기 도구는 null (아무것도 선택 안 함 — 이동 전용)
+      this.drawCanvas.setTool(null, this.toolbar.opts);
     }
     this._showColorPickerPanel();
-    // 배경 탭 초기 선택색 설정
     this.toolbar._bgColorSelected = this.widget.data.bgColor ?? "#FFF9A0";
   }
 
@@ -992,6 +1030,7 @@ export class DrawingOverlay {
     const panel = this.el.querySelector(".sno-color-picker-panel");
     if (!panel || this.colorPicker) return;
     panel.style.display = "";
+    this._toolColors = this._toolColors ?? {};
     this.colorPicker = new ColorPicker(panel, this.toolbar?.opts.color ?? "#e05555", ({hex, alpha}) => {
       if (!this.toolbar) return;
       this.toolbar.opts.color   = hex;
@@ -999,8 +1038,33 @@ export class DrawingOverlay {
       this.drawCanvas?.setColor(hex);
       this.drawCanvas?.setOpt("opacity", alpha);
       this.toolbar.updateColorDot(this.toolbar.activeTool, hex);
+      // 6: 도구별 색 저장
+      const tid = this.toolbar.activeTool;
+      if (tid) this._toolColors[tid] = { hex, alpha };
+      // 4: 텍스트 편집 중이면 미리보기 색 즉시 반영
+      if (this._textEditing && this._pendingTextEl) {
+        this._pendingTextEl.style.color = hex;
+      }
     });
     this.colorPicker.render();
+    this._positionColorPanel();
+  }
+
+  /** 5: 도구 버튼 클릭 시 색상 패널 표시/위치 갱신 */
+  _openColorPickerAt(btnEl) {
+    const panel = this.el?.querySelector(".sno-color-picker-panel");
+    if (!panel) return;
+    panel.style.display = "";
+    // 6: 해당 도구의 마지막 색 복원
+    const toolId = this.toolbar?.activeTool;
+    if (toolId && this._toolColors?.[toolId]) {
+      const {hex, alpha} = this._toolColors[toolId];
+      this.colorPicker?.setColor(hex);
+      this.toolbar.opts.color   = hex;
+      this.toolbar.opts.opacity = alpha;
+      this.drawCanvas?.setColor(hex);
+      this.drawCanvas?.setOpt("opacity", alpha);
+    }
     this._positionColorPanel();
   }
 
@@ -1060,7 +1124,7 @@ export class DrawingOverlay {
         e.preventDefault();
         const from = this._layerDragIdx;
         const to   = +el.dataset.idx;
-        if (from !== -1 && from !== to) this.layerMgr.reorderLayer(from, to);
+        if (from !== -1 && from !== to) { this._pushLayerUndo("레이어이동"); this.layerMgr.reorderLayer(from, to); }
         this._layerDragIdx = -1; this._clearLayerDragOver();
       });
 
@@ -1101,6 +1165,67 @@ export class DrawingOverlay {
   /* ══════════════════════════════════════════
      HISTORY UI
   ═════════════════════════════════════════════ */
+  /* ══ 레이어 구조 undo ══
+     layerMgr 전체 상태(각 레이어 canvas 픽셀 + textData)를 스냅.
+     drawCanvas._commitStrokeUndo가 단일 레이어 픽셀만 저장하는 것과 달리
+     레이어 추가/삭제/순서 등 구조 변경에 사용.
+  ══ */
+  _pushLayerUndo(label) {
+    if (!this.layerMgr || !this.drawCanvas) return;
+    // 모든 레이어 canvas 스냅
+    const snap = this.layerMgr.layers.map(l => {
+      const bak = document.createElement("canvas");
+      bak.width = l.canvas.width; bak.height = l.canvas.height;
+      bak.getContext("2d").drawImage(l.canvas, 0, 0);
+      return {
+        label    : l.label,
+        type     : l.type,
+        isBackground: l.isBackground,
+        opacity  : l.opacity,
+        visible  : l.visible,
+        textData : l.textData ? { ...l.textData } : null,
+        canvas   : bak,
+      };
+    });
+    const activeIdx = this.layerMgr._activeIdx;
+    this._layerUndoStack = this._layerUndoStack ?? [];
+    this._layerUndoLabels = this._layerUndoLabels ?? [];
+    if (this._layerUndoStack.length >= 30) {
+      this._layerUndoStack.shift();
+      this._layerUndoLabels.shift();
+    }
+    this._layerUndoStack.push({ snap, activeIdx });
+    this._layerUndoLabels.push(label ?? "레이어작업");
+    // drawCanvas history에도 표시용으로 추가
+    this.drawCanvas.history.push(label ?? "레이어작업");
+    this.drawCanvas._undoStack.push({ _layerOp: true, label });
+    this._refreshHistoryUI();
+  }
+
+  _undoLayerOp() {
+    if (!this._layerUndoStack?.length) return false;
+    const { snap, activeIdx } = this._layerUndoStack.pop();
+    this._layerUndoLabels.pop();
+    // 레이어 복원
+    this.layerMgr._layers = snap.map(s => {
+      const canvas = document.createElement("canvas");
+      canvas.width = s.canvas.width; canvas.height = s.canvas.height;
+      canvas.getContext("2d").drawImage(s.canvas, 0, 0);
+      return {
+        label: s.label, type: s.type, isBackground: s.isBackground,
+        opacity: s.opacity, visible: s.visible,
+        textData: s.textData ? { ...s.textData } : null,
+        canvas,
+      };
+    });
+    this.layerMgr._activeIdx = Math.min(activeIdx, this.layerMgr._layers.length - 1);
+    this.drawCanvas.baseCanvas = this.layerMgr.activeCanvas;
+    this.drawCanvas.baseCtx    = this.layerMgr.activeCanvas?.getContext("2d");
+    this.layerMgr.onUpdate?.();
+    this._refreshLayerUI();
+    return true;
+  }
+
   _refreshHistoryUI() {
     const list = this.el?.querySelector(".sno-history-list");
     if (!list || !this.drawCanvas) return;
@@ -1123,25 +1248,65 @@ export class DrawingOverlay {
      TEXT (2, 6, 8번)
   ═════════════════════════════════════════════ */
   onTextClick(x, y, evt) {
-    // 2: 이미 편집 중이면 무시
+    // 이동 도구 + 텍스트 레이어 히트 → 드래그 이동
+    if (this.toolbar?.activeTool === "move") {
+      const hitIdx = this._hitTestTextLayer(x, y);
+      if (hitIdx !== -1) {
+        this._startTextLayerMove(hitIdx, x, y);
+        return;
+      }
+    }
+
     if (this._textEditing) return;
 
-    // 8: 기존 텍스트 레이어 클릭 감지
     const hitLayerIdx = this._hitTestTextLayer(x, y);
     if (hitLayerIdx !== -1) {
       this._enterTextLayerEdit(hitLayerIdx);
       return;
     }
 
-    // 6: 현재 레이어가 텍스트 레이어인데 그리기 도구 사용 → 변환 다이얼로그
     const activeLayer = this.layerMgr.activeLayer;
-    if (activeLayer?.type === "text" && this.toolbar?.activeTool !== TOOLS.TEXTBOX) {
-      this._askRasterize();
+    if (activeLayer?.type === "text" && this.toolbar?.activeTool !== "textbox") {
+      const drawableIdx = this.layerMgr.layers.findLastIndex?.(
+        (l, i) => !l.isBackground && l.type !== "text"
+      ) ?? -1;
+      if (drawableIdx !== -1) this._switchActiveLayer(drawableIdx);
       return;
     }
 
-    // 새 텍스트 레이어 생성
-    this._startNewTextInput(x, y);
+    // evt로부터 overlayCanvas rect를 캡처해서 전달 (좌표계 일관성 보장)
+    const ocRect = evt?.target?.getBoundingClientRect?.() ?? null;
+    this._startNewTextInput(x, y, ocRect);
+  }
+
+  /** 3: 이동 도구로 텍스트 레이어 드래그 */
+  _startTextLayerMove(idx, startX, startY) {
+    const layer = this.layerMgr.layers[idx];
+    if (!layer?.textData) return;
+    const origX = layer.textData.x;
+    const origY = layer.textData.y;
+    // 이동 전 레이어 스냅 저장 (undo용)
+    this._pushLayerUndo("텍스트이동");
+
+    const onMove = (e) => {
+      if (!this.drawCanvas) return;
+      const rect = this.drawCanvas.overlayCanvas.getBoundingClientRect();
+      const scaleX = this.drawCanvas.W / rect.width;
+      const scaleY = this.drawCanvas.H / rect.height;
+      const curX = (e.clientX - rect.left) * scaleX;
+      const curY = (e.clientY - rect.top)  * scaleY;
+      const newX = origX + (curX - startX);
+      const newY = origY + (curY - startY);
+      this.layerMgr.updateTextLayer(idx, {
+        ...layer.textData, x: newX, y: newY
+      });
+    };
+    const onUp = () => {
+      document.removeEventListener("mousemove", onMove);
+      document.removeEventListener("mouseup",   onUp);
+    };
+    document.addEventListener("mousemove", onMove);
+    document.addEventListener("mouseup",   onUp);
   }
 
   _hitTestTextLayer(cx, cy) {
@@ -1163,10 +1328,21 @@ export class DrawingOverlay {
   }
 
   _enterTextLayerEdit(idx) {
-    // 2: 중복 방지
-    if (this._textEditing) return;
+    // 기존 편집 중이면 먼저 커밋
+    if (this._textEditing) {
+      this._commitTextLayer();
+      this._hideTextBar();
+    }
     const layer = this.layerMgr.layers[idx];
     if (!layer || layer.type !== "text") return;
+
+    // 5: 텍스트 도구 자동 선택
+    if (this.toolbar && this.toolbar.activeTool !== "textbox") {
+      this.toolbar.selectTool("textbox");
+      this._openColorPickerAt?.(
+        this.el?.querySelector('.sn-tool-btn[data-tool="textbox"]')
+      );
+    }
 
     this.layerMgr.setActive(idx);
     this._editingLayerIdx = idx;
@@ -1186,33 +1362,66 @@ export class DrawingOverlay {
     mount.querySelector(".sno-text-layer-input")?.remove();
     const sw = Math.round(this._memoBaseW * this._zoom);
     const sh = Math.round(this._memoBaseH * this._zoom);
-    const dispX = Math.round(td.x * (sw / this.layerMgr.W));
-    const dispY = Math.round(td.y * (sh / this.layerMgr.H));
-    const color = td.color ?? this.toolbar?.opts.color ?? "#333";
+    const overlayRect0 = this.drawCanvas?.overlayCanvas?.getBoundingClientRect();
+    const scale  = overlayRect0 && overlayRect0.width > 0
+      ? overlayRect0.width / this.layerMgr.W : sw / this.layerMgr.W;
+    const dispX  = Math.round(td.x * scale);
+    const dispY  = Math.round(td.y * scale);
+    const cssFontSize = Math.round(td.size * scale);
+    const cssLH  = Math.round(td.size * scale * ((td.lineHeight ?? 160) / 100));
+    const color  = td.color ?? this.toolbar?.opts.color ?? "#333";
     const ta = document.createElement("div");
     ta.className       = "sno-text-layer-input";
     ta.contentEditable = "true";
     ta.innerText       = td.text ?? "";
+    ta.dataset.canvasX = td.x;   // 2: canvas 좌표 저장 (zoom 변경 후에도 고정)
+    ta.dataset.canvasY = td.y;
     ta.style.cssText   = `
       position:absolute;left:${dispX}px;top:${dispY}px;
-      min-width:60px;min-height:${td.size*1.6}px;
-      font-family:${td.font};font-size:${td.size}px;
+      min-width:60px;min-height:${cssFontSize * 1.6}px;
+      font-family:${td.font};font-size:${cssFontSize}px;
       font-weight:${td.bold?"bold":"normal"};font-style:${td.italic?"italic":"normal"};
       text-decoration:${td.underline?"underline":"none"};
-      letter-spacing:${td.spacing}px;line-height:${td.lineHeight}%;
+      letter-spacing:${Math.round((td.spacing??0) * scale)}px;
+      line-height:${(td.lineHeight??160)/100 * cssFontSize}px;
       text-align:${td.align};color:${color};
-      outline:1.5px dashed #4a90d9;padding:3px 5px;
-      white-space:pre-wrap;word-break:break-word;cursor:text;pointer-events:all;`;
+      outline:1.5px dashed #4a90d9;padding:0;margin:0;
+      white-space:pre-wrap;word-break:break-word;cursor:text;pointer-events:all;
+      box-sizing:border-box;`;
     mount.appendChild(ta);
+    // 2: 자동 포커스 + 커서 끝으로
     ta.focus();
+    const range = document.createRange();
+    range.selectNodeContents(ta);
+    range.collapse(false);
+    const sel = window.getSelection();
+    sel.removeAllRanges();
+    sel.addRange(range);
     this._pendingTextEl = ta;
+    this._addTextDragHandle(ta);
     this._refreshLayerUI();
+
+    // 1: 바깥 클릭 시 취소
+    const onTextOutside1 = (e) => {
+      if (ta.contains(e.target)) return;                          // 텍스트 내부 → 무시
+      if (e.target.closest(".sno-text-optbar")) return;           // 텍스트 옵션바 → 무시
+      if (e.target.closest(".sno-color-picker-panel")) return;    // 색상 패널 → 무시(색만 변경)
+      // 노트 내부(sno-memo-inner) 클릭 → 무시 (다른 위치 클릭해도 편집 유지)
+      if (e.target.closest(".sno-memo-inner") && !e.target.closest(".sno-toolbar-mount") && !e.target.closest(".sno-layer-panel")) return;
+      // 그 외(툴바, 레이어패널, 외부) → 커밋
+      this._commitTextLayer();
+      document.removeEventListener("mousedown", onTextOutside1, true);
+    };
+    setTimeout(() => document.addEventListener("mousedown", onTextOutside1, true), 100);
+    this._textOutsideHandler = onTextOutside1;
   }
 
-  _startNewTextInput(x, y) {
-    if (this._textEditing) return;
+  _startNewTextInput(x, y, ocRect) {
+    if (this._textEditing) {
+      this._commitTextLayer();
+    }
 
-    // 새 텍스트 레이어 추가
+    this._pushLayerUndo("레이어추가");
     this.layerMgr.addLayer("text", "텍스트");
     const newIdx = this.layerMgr._activeIdx;
     this._editingLayerIdx = newIdx;
@@ -1224,29 +1433,53 @@ export class DrawingOverlay {
     mount.querySelector(".sno-text-layer-input")?.remove();
 
     const o = this._textOpts;
-    const sw = Math.round(this._memoBaseW * this._zoom);
-    const sh = Math.round(this._memoBaseH * this._zoom);
-    const dispX = Math.round(x * (sw / this.layerMgr.W));
-    const dispY = Math.round(y * (sh / this.layerMgr.H));
-    const color = this.toolbar?.opts.color ?? "#333";
+    // ocRect: 클릭 시점의 overlayCanvas rect (가장 정확한 좌표계 기준)
+    const rect = ocRect ?? this.drawCanvas?.overlayCanvas?.getBoundingClientRect();
+    const ocW  = rect?.width  ?? Math.round(this._memoBaseW * this._zoom);
+    const ocH  = rect?.height ?? Math.round(this._memoBaseH * this._zoom);
+    const scaleX = ocW / this.layerMgr.W;
+    const scaleY = ocH / this.layerMgr.H;
+    const dispX       = Math.round(x * scaleX);
+    const dispY       = Math.round(y * scaleY);
+    const cssFontSize2 = Math.round(o.size * scaleX);
+
+    const color  = this.toolbar?.opts.color ?? "#333";
 
     const ta = document.createElement("div");
     ta.className       = "sno-text-layer-input";
     ta.contentEditable = "true";
+    ta.dataset.canvasX = x;   // 2: canvas 좌표 저장
+    ta.dataset.canvasY = y;
     ta.style.cssText   = `
       position:absolute;left:${dispX}px;top:${dispY}px;
-      min-width:60px;min-height:${o.size*1.6}px;
-      font-family:${o.font};font-size:${o.size}px;
+      min-width:60px;min-height:${cssFontSize2 * 1.6}px;
+      font-family:${o.font};font-size:${cssFontSize2}px;
       font-weight:${o.bold?"bold":"normal"};font-style:${o.italic?"italic":"normal"};
       text-decoration:${o.underline?"underline":"none"};
-      letter-spacing:${o.spacing}px;line-height:${o.lineHeight}%;
+      letter-spacing:${Math.round((o.spacing??0) * scaleX)}px;
+      line-height:${(o.lineHeight??160)/100 * cssFontSize2}px;
       text-align:${o.align};color:${color};
-      outline:1.5px dashed #4a90d9;padding:3px 5px;
-      white-space:pre-wrap;word-break:break-word;cursor:text;pointer-events:all;`;
+      outline:1.5px dashed #4a90d9;padding:0;margin:0;
+      white-space:pre-wrap;word-break:break-word;cursor:text;pointer-events:all;
+      box-sizing:border-box;`;
     mount.appendChild(ta);
+    // 2: 자동 포커스
     ta.focus();
     this._pendingTextEl = ta;
+    this._addTextDragHandle(ta);
     this._refreshLayerUI();
+
+    // 1: 바깥 클릭 시 취소
+    const onTextOutside = (e) => {
+      if (ta.contains(e.target)) return;
+      if (e.target.closest(".sno-text-optbar")) return;
+      if (e.target.closest(".sno-color-picker-panel")) return;
+      if (e.target.closest(".sno-memo-inner") && !e.target.closest(".sno-toolbar-mount") && !e.target.closest(".sno-layer-panel")) return;
+      this._commitTextLayer();
+      document.removeEventListener("mousedown", onTextOutside, true);
+    };
+    setTimeout(() => document.addEventListener("mousedown", onTextOutside, true), 100);
+    this._textOutsideHandler = onTextOutside;
   }
 
   _showTextBar() {
@@ -1263,6 +1496,41 @@ export class DrawingOverlay {
     bar.querySelectorAll(".sno-txt-align").forEach(b => b.classList.toggle("active", b.dataset.align === o.align));
   }
 
+  /** 1: 텍스트 입력창 드래그 핸들 */
+  _addTextDragHandle(ta) {
+    ta.style.cursor = "text";
+    // 테두리 영역(4px) 마우스다운 감지로 이동 vs 편집 구분
+    ta.addEventListener("mousedown", e => {
+      const rect = ta.getBoundingClientRect();
+      const EDGE = 8;  // 테두리 영역 픽셀
+      const onEdge = e.clientX - rect.left < EDGE || rect.right  - e.clientX < EDGE
+                  || e.clientY - rect.top  < EDGE || rect.bottom - e.clientY < EDGE;
+      if (!onEdge) return;  // 내부 클릭 — 텍스트 편집 모드
+      e.preventDefault(); e.stopPropagation();
+      const sx = e.clientX, sy = e.clientY;
+      const ox = parseFloat(ta.style.left), oy = parseFloat(ta.style.top);
+      ta.style.cursor = "move";
+      const onMove = ev => {
+        ta.style.left = (ox + ev.clientX - sx) + "px";
+        ta.style.top  = (oy + ev.clientY - sy) + "px";
+      };
+      const onUp = () => {
+        ta.style.cursor = "text";
+        // 드래그 후 dataset canvas 좌표 갱신
+        if (this.layerMgr) {
+          const sw2    = Math.round(this._memoBaseW * this._zoom);
+          const scaleC = this.layerMgr.W / sw2;
+          ta.dataset.canvasX = parseFloat(ta.style.left) * scaleC;
+          ta.dataset.canvasY = parseFloat(ta.style.top)  * scaleC;
+        }
+        document.removeEventListener("mousemove", onMove);
+        document.removeEventListener("mouseup",   onUp);
+      };
+      document.addEventListener("mousemove", onMove);
+      document.addEventListener("mouseup",   onUp);
+    });
+  }
+
   _hideTextBar() {
     this.el.querySelector(".sno-text-optbar").style.display = "none";
     this._textEditing     = false;
@@ -1275,10 +1543,24 @@ export class DrawingOverlay {
     const idx = this._editingLayerIdx;
     if (!ta) return;
     const text = ta.innerText?.trim() ?? "";
-    const sw   = Math.round(this._memoBaseW * this._zoom);
-    const sh   = Math.round(this._memoBaseH * this._zoom);
-    const x    = parseFloat(ta.style.left)  * (this.layerMgr.W / sw);
-    const y    = parseFloat(ta.style.top)   * (this.layerMgr.H / sh);
+    const sw    = Math.round(this._memoBaseW * this._zoom);
+    const scale = this.layerMgr.W / sw;
+    const o     = this._textOpts;
+    // overlayCanvas 실제 표시 크기 기준으로 canvas 좌표 계산
+    const overlayRect3 = this.drawCanvas?.overlayCanvas?.getBoundingClientRect();
+    const ocScaleX = overlayRect3 && overlayRect3.width  > 0
+      ? this.layerMgr.W / overlayRect3.width  : this.layerMgr.W / sw;
+    const ocScaleY = overlayRect3 && overlayRect3.height > 0
+      ? this.layerMgr.H / overlayRect3.height : this.layerMgr.H / sh;
+    let x, y;
+    if (ta.dataset.canvasX !== undefined && ta.dataset.canvasY !== undefined) {
+      x = parseFloat(ta.dataset.canvasX);
+      y = parseFloat(ta.dataset.canvasY);
+    } else {
+      x = parseFloat(ta.style.left) * ocScaleX;
+      y = parseFloat(ta.style.top)  * ocScaleY;
+    }
+
 
     const textData = {
       text, x, y, ...this._textOpts,
@@ -1288,8 +1570,8 @@ export class DrawingOverlay {
 
     if (text && idx >= 0) {
       this.layerMgr.updateTextLayer(idx, textData);
+      this.drawCanvas?._commitStrokeUndo?.("텍스트");  // 3
     } else if (!text && idx >= 0) {
-      // 빈 텍스트면 레이어 삭제
       this.layerMgr.removeLayer(idx);
     }
 
@@ -1368,6 +1650,7 @@ export class DrawingOverlay {
 
     // 레이어 추가
     el.querySelector(".sno-add-layer-btn").addEventListener("click", () => {
+      this._pushLayerUndo("레이어추가");
       this.layerMgr.addLayer("image");
       this._switchActiveLayer(this.layerMgr._activeIdx);
       this._compositeToDOM();
@@ -1375,7 +1658,8 @@ export class DrawingOverlay {
     el.querySelector(".sno-add-image-btn").addEventListener("click", () => this._addImageToCanvas());
 
     // 불투명도
-    el.querySelector(".sno-opacity-slider").addEventListener("input", e => {
+    const opacitySlider = el.querySelector(".sno-opacity-slider");
+    opacitySlider.addEventListener("input", e => {
       const opacity = +e.target.value/100;
       el.querySelector(".sno-opacity-val").textContent = e.target.value+"%";
       const layer = this.layerMgr?.activeLayer;
@@ -1384,6 +1668,9 @@ export class DrawingOverlay {
         const wrapper = el.querySelector(`.sno-layers-mount [data-layer-idx="${this.layerMgr._activeIdx}"]`);
         if (wrapper) wrapper.style.opacity = opacity;
       }
+    });
+    opacitySlider.addEventListener("change", () => {
+      this.drawCanvas?._commitStrokeUndo?.("불투명도");
     });
 
     // 메모 좌클릭 드래그
@@ -1399,9 +1686,9 @@ export class DrawingOverlay {
       if (!btn) return;
       const idx = +this._ctxMenu.dataset.layerIdx;
       switch(btn.dataset.action) {
-        case "duplicate": this.layerMgr.duplicateLayer(idx); break;
-        case "merge":     this.layerMgr.mergeDown(idx); break;
-        case "remove":    this.layerMgr.removeLayer(idx); break;
+        case "duplicate": this._pushLayerUndo("레이어복사"); this.layerMgr.duplicateLayer(idx); break;
+        case "merge":     this._pushLayerUndo("레이어병합"); this.layerMgr.mergeDown(idx); break;
+        case "remove":    this._pushLayerUndo("레이어삭제"); this.layerMgr.removeLayer(idx); break;
       }
       this._hideCtxMenu();
     });
@@ -1457,11 +1744,34 @@ export class DrawingOverlay {
     this._zoom = Math.max(this._MIN_ZOOM, Math.min(this._MAX_ZOOM, z));
     this._applyMemoTransform();
     this._compositeToDOM();
-    this._resizeOverlayMount(); // 무한 캔버스 크기 갱신
+    this._resizeOverlayMount();
     const pct = Math.round(this._zoom*100);
     this.el.querySelector(".sno-zoom-slider").value = pct;
     this.el.querySelector(".sno-zoom-label").textContent = pct+"%";
     this._positionColorPanel();
+    // 3/4: 텍스트 입력창 위치/크기 zoom에 맞게 갱신
+    this._updateTextInputForZoom();
+  }
+
+  /** 줌 변경 시 텍스트 입력창 재배치 */
+  _updateTextInputForZoom() {
+    const ta = this._pendingTextEl;
+    if (!ta || !this.layerMgr || !ta.dataset.canvasX) return;
+    // overlayCanvas 실제 표시 크기 기준으로 계산 (scale 계산 오류 방지)
+    const overlayRect = this.drawCanvas?.overlayCanvas?.getBoundingClientRect();
+    if (!overlayRect || overlayRect.width === 0) return;
+    const scaleX = overlayRect.width  / this.layerMgr.W;
+    const scaleY = overlayRect.height / this.layerMgr.H;
+    const canvasX = parseFloat(ta.dataset.canvasX);
+    const canvasY = parseFloat(ta.dataset.canvasY);
+    const o = this._textOpts;
+    const cssFontSize = Math.round(o.size * scaleX);
+    ta.style.left          = Math.round(canvasX * scaleX) + "px";
+    ta.style.top           = Math.round(canvasY * scaleY) + "px";
+    ta.style.fontSize      = cssFontSize + "px";
+    ta.style.minHeight     = (cssFontSize * 1.6) + "px";
+    ta.style.letterSpacing = Math.round((o.spacing??0) * scaleX) + "px";
+    ta.style.lineHeight    = ((o.lineHeight??160)/100 * cssFontSize) + "px";
   }
 
   /** 줌 변경 시 overlayMount + drawCanvas CSS 크기 갱신 */
@@ -1655,12 +1965,19 @@ export class DrawingOverlay {
 
   /* ══ CLOSE ══ */
   async _close(commit) {
-    // 즉시 비활성화 — Ctrl+Z 등 키 이벤트 차단 해제
     if (this.drawCanvas) this.drawCanvas.deactivate();
 
     if (commit && this.layerMgr) {
       const dataUrl = this.layerMgr.flatten();
       await this.widget.commitDrawingLayer(dataUrl, this.layerMgr.W, this.layerMgr.H);
+    } else if (!commit && this.layerMgr) {
+      // 4: 취소 시 배경색 원복
+      const origBg = this._initBgColor ?? this.widget.data.bgColor;
+      if (origBg) {
+        this.widget.data.bgColor = origBg;
+        const isTransparent = origBg === "transparent" || origBg === "rgba(0,0,0,0)";
+        this.widget.el.style.backgroundColor = isTransparent ? "transparent" : origBg;
+      }
     }
     this._fpObserver?.disconnect();
     document.removeEventListener("mousedown", this._outsideClickHandler, true);

@@ -70,6 +70,7 @@ export class DrawingCanvas {
 
     this.onHistoryChange = null;
     this.onColorUsed     = null;
+    this.onLayerUndo     = null;
   }
 
   _makeCanvas(cls) {
@@ -94,8 +95,15 @@ export class DrawingCanvas {
     if (opts) Object.assign(this.opts, opts);
     if (!CURSOR_PREVIEW_TOOLS.has(toolId)) this._clearCursorPreview();
     this._removeTextInput();
-    this.overlayCanvas.style.cursor = CURSOR_PREVIEW_TOOLS.has(toolId) ? "none"
-      : this._cursorForTool(toolId);
+    // 1: tool null이면 overlayCanvas 이벤트 비활성화
+    if (!toolId) {
+      this.overlayCanvas.style.pointerEvents = "none";
+      this.overlayCanvas.style.cursor = "default";
+    } else {
+      this.overlayCanvas.style.pointerEvents = "all";
+      this.overlayCanvas.style.cursor = CURSOR_PREVIEW_TOOLS.has(toolId) ? "none"
+        : this._cursorForTool(toolId);
+    }
     if (this._selectionActive) this._drawSelectionOverlay();
   }
   setColor(c) { this.color = c; }
@@ -190,6 +198,15 @@ export class DrawingCanvas {
   /* ══ MOUSE DOWN (overlayCanvas) ══ */
   _onDown(e) {
     if (e.button !== 0) return;
+    if (!this.tool) return;  // 도구 없으면 이벤트 통과
+
+    // TEXTBOX는 onTextClick으로 처리
+    if (this.tool === TOOLS.TEXTBOX) {
+      const p = this._pos(e);
+      this.widget?.onTextClick?.(p.x, p.y, e);
+      return;
+    }
+
     this._isDown = true;
     const p = this._pos(e);
     this._startX = p.x; this._startY = p.y;
@@ -301,11 +318,11 @@ export class DrawingCanvas {
   /* ══ KEYBOARD — capture:true ══ */
   _onKey(e) {
     if (!this._active) {
-      // 그리기 모드 비활성 시 아무것도 하지 않음 (Foundry에 전달)
       return;
     }
-    // 그리기 모드 활성 시 Ctrl+Z, Ctrl+A 등 가로채기
     if (this._textInput) return;
+    // 2: contentEditable 텍스트 입력 중 — 클립보드/선택 통과
+    if (e.target.isContentEditable) return;
     if (["INPUT","TEXTAREA","SELECT"].includes(e.target.tagName)) return;
 
     if (e.ctrlKey && e.key === "z") {
@@ -583,7 +600,7 @@ export class DrawingCanvas {
       ctx.fillStyle=this.color; ctx.globalAlpha=this.opts.opacity;
       text.split("\n").forEach((line,i)=>ctx.fillText(line,x,y+this.opts.textSize*(i+1)));
       ctx.globalAlpha=1;
-      this._commitStrokeUndo("텍스트");
+      this._commitStrokeUndo("텍스트");  // onHistoryChange가 여기서 호출됨
     }
     input.remove(); this._textInput=null;
   }
@@ -675,7 +692,6 @@ export class DrawingCanvas {
   }
 
   _continueMove(p) {
-    if (!this._moveSnap) return;
     const dx = Math.round(p.x - this._startX);
     const dy = Math.round(p.y - this._startY);
     this._moveOffX = dx; this._moveOffY = dy;
@@ -684,7 +700,7 @@ export class DrawingCanvas {
     // 원본 복원
     this.baseCtx.putImageData(this._moveSnap, 0, 0);
 
-    // 원본 위치 지우기 (clip 없음 — 노트 밖도 허용)
+    // 원본 위치 지우기
     this.baseCtx.save();
     this.baseCtx.globalCompositeOperation = "destination-out";
     if (sel.path) {
@@ -697,7 +713,7 @@ export class DrawingCanvas {
     }
     this.baseCtx.restore();
 
-    // 이동된 위치에 그리기 (clip 없음)
+    // 이동된 위치에 그리기
     const tmp = document.createElement("canvas");
     tmp.width = this.W; tmp.height = this.H;
     tmp.getContext("2d").putImageData(this._moveSnap, 0, 0);
@@ -708,12 +724,11 @@ export class DrawingCanvas {
       this.baseCtx.closePath(); this.baseCtx.clip();
       this.baseCtx.drawImage(tmp, dx, dy);
     } else {
-      // clip 없이 전체 영역 이동
       this.baseCtx.drawImage(tmp, sel.x, sel.y, sel.w, sel.h, sel.x+dx, sel.y+dy, sel.w, sel.h);
     }
     this.baseCtx.restore();
 
-    // 선택 영역 표시 업데이트
+    // 선택 영역 표시 (드래그 중 onHistoryChange 호출 안 함 — 잔상 방지)
     this._clearOverlay();
     const moved = sel.path
       ? { ...sel, path: sel.path.map(pt => ({ x:pt.x+dx, y:pt.y+dy })) }
@@ -725,7 +740,7 @@ export class DrawingCanvas {
       ctx.closePath(); ctx.stroke();
     } else { ctx.strokeRect(moved.x, moved.y, moved.w, moved.h); }
     ctx.restore();
-    this.onHistoryChange?.();
+    // onHistoryChange 호출 안 함 (commitMove에서만 호출)
   }
 
   _commitMove() {
@@ -778,10 +793,28 @@ export class DrawingCanvas {
     this.onHistoryChange?.();
   }
   _undo() {
-    if(!this._undoStack.length) return;
+    if (!this._undoStack.length) return;
+    const top = this._undoStack[this._undoStack.length - 1];
+
+    // 레이어 구조 undo — snap 없음, 외부 핸들러 위임
+    if (top?._layerOp) {
+      this._undoStack.pop(); this.history.pop();
+      this.onLayerUndo?.();
+      this.onHistoryChange?.();
+      return;
+    }
+
     this._undoStack.pop(); this.history.pop();
-    if(this._undoStack.length){ this.baseCtx.putImageData(this._undoStack[this._undoStack.length-1].snap,0,0);}
-    else{ if(this._initialSnap) this.baseCtx.putImageData(this._initialSnap,0,0); else this.baseCtx.clearRect(0,0,this.W,this.H);}
+    const prev = this._undoStack.length
+      ? this._undoStack[this._undoStack.length - 1]
+      : null;
+
+    if (prev && !prev._layerOp && prev.snap) {
+      this.baseCtx.putImageData(prev.snap, 0, 0);
+    } else if (!this._undoStack.length) {
+      if (this._initialSnap) this.baseCtx.putImageData(this._initialSnap, 0, 0);
+      else this.baseCtx.clearRect(0, 0, this.W, this.H);
+    }
     this.onHistoryChange?.();
   }
   saveInitialSnap() { this._initialSnap=this.baseCtx.getImageData(0,0,this.W,this.H); }
