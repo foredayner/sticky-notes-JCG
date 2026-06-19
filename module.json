@@ -21,9 +21,9 @@
     { "lang": "en", "name": "English", "path": "lang/en.json" }
   ],
   "socket": true,
-  "manifest": "https://raw.githubusercontent.com/foredayner/sticky-notes-JCG/main/module.json",
-  "download": "https://github.com/foredayner/sticky-notes-JCG/releases/latest/download/sticky-notes-jcg.zip",
-  "url": "https://github.com/foredayner/sticky-notes-JCG",
-  "bugs": "https://github.com/foredayner/sticky-notes-JCG/issues",
-  "readme": "https://github.com/foredayner/sticky-notes-JCG/blob/main/README.md"
+  "manifest": "https://raw.githubusercontent.com/foredayner/sticky-notes-jcg/main/module.json",
+  "download": "https://github.com/foredayner/sticky-notes-jcg/releases/latest/download/sticky-notes-jcg.zip",
+  "url": "https://github.com/foredayner/sticky-notes-jcg",
+  "bugs": "https://github.com/foredayner/sticky-notes-jcg/issues",
+  "readme": "https://github.com/foredayner/sticky-notes-jcg/blob/main/README.md"
 }

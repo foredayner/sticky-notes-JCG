@@ -12,7 +12,7 @@ Foundry VTT용 스티커 메모 모듈입니다.
 - ✏️ **드로잉 도구** — 펜, 스프레이, 지우개, 직선, 도형, 텍스트, 채우기, 블러
 - 🖼️ **레이어 시스템** — 여러 레이어, 불투명도, 병합, 순서 변경
 - 🔄 **편집 도구** — 회전, 대칭, 크기 조절 (영역 선택 지원)
-- 🎨 **색상 피커** — HSV 색상 피커, 투명도 조절
+- 🎨 **색상 피커** — HSV 색상 피커, 투명도 조절, 도구별 색상 유지
 - 📡 **멀티플레이어** — GM/플레이어 모두 메모 생성 및 실시간 동기화
 - 💾 **영구 저장** — 씬 전환 후에도 메모 유지
 
@@ -23,11 +23,11 @@ Foundry VTT용 스티커 메모 모듈입니다.
 ### URL로 설치 (권장)
 Foundry VTT → 모듈 관리 → URL로 설치:
 ```
-https://raw.githubusercontent.com/foredayner/sticky-notes-fvtt/main/sticky-notes-fvtt/module.json
+https://raw.githubusercontent.com/foredayner/sticky-notes-jcg/main/module.json
 ```
 
 ### 수동 설치
-1. 최신 릴리즈에서 `sticky-notes.zip` 다운로드
+1. 최신 릴리즈에서 `sticky-notes-jcg.zip` 다운로드
 2. Foundry의 `Data/modules/` 폴더에 압축 해제
 
 ---
@@ -48,6 +48,13 @@ https://raw.githubusercontent.com/foredayner/sticky-notes-fvtt/main/sticky-notes
 |---|---|
 | V14 | ✅ 확인됨 |
 | V13 | ✅ 지원 |
+
+---
+
+## 링크
+
+- [GitHub 저장소](https://github.com/foredayner/sticky-notes-jcg)
+- [버그 리포트](https://github.com/foredayner/sticky-notes-jcg/issues)
 
 ---
 
