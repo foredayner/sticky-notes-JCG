@@ -13,7 +13,7 @@ import { StickyNoteManager } from "./StickyNoteManager.mjs";
 import { DrawingOverlay }    from "./DrawingOverlay.mjs";
 import { ImageImporter }     from "./ImageImporter.mjs";
 
-const MODULE_ID = "sticky-notes";
+const MODULE_ID = "sticky-notes-jcg";
 
 export class StickyNoteWidget {
 

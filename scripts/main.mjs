@@ -5,7 +5,7 @@
 import { StickyNoteStore }   from "./StickyNoteStore.mjs";
 import { StickyNoteManager } from "./StickyNoteManager.mjs";
 
-const MODULE_ID = "sticky-notes";
+const MODULE_ID = "sticky-notes-jcg";
 
 /* ══ INIT ══ */
 Hooks.once("init", () => {

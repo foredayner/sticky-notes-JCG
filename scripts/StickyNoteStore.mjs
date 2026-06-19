@@ -33,7 +33,7 @@
  */
 
 const SETTING_KEY = "stickyNotesData";
-const MODULE_ID   = "sticky-notes";
+const MODULE_ID   = "sticky-notes-jcg";
 
 export class StickyNoteStore {
 

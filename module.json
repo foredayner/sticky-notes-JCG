@@ -1,5 +1,5 @@
 {
-  "id": "sticky-notes",
+  "id": "sticky-notes-jcg",
   "title": "Sticky Notes JCG",
   "description": "씬에 스티커 메모를 붙일 수 있는 모듈. 포토샵 스타일 드로잉 도구, 레이어 시스템, 멀티플레이어 동기화 포함.",
   "version": "2.1.0",
@@ -14,16 +14,16 @@
     "scripts/main.mjs"
   ],
   "styles": [
-    "styles/sticky-notes.css"
+    "styles/sticky-notes-jcg.css"
   ],
   "languages": [
     { "lang": "ko", "name": "한국어", "path": "lang/ko.json" },
     { "lang": "en", "name": "English", "path": "lang/en.json" }
   ],
   "socket": true,
-  "manifest": "https://raw.githubusercontent.com/foredayner/sticky-notes-fvtt/main/sticky-notes-fvtt/module.json",
-  "download": "https://github.com/foredayner/sticky-notes-fvtt/releases/latest/download/sticky-notes.zip",
-  "url": "https://github.com/foredayner/sticky-notes-fvtt",
-  "bugs": "https://github.com/foredayner/sticky-notes-fvtt/issues",
-  "readme": "https://github.com/foredayner/sticky-notes-fvtt/blob/main/README.md"
+  "manifest": "https://raw.githubusercontent.com/foredayner/sticky-notes-jcg/main/module.json",
+  "download": "https://github.com/foredayner/sticky-notes-jcg/releases/latest/download/sticky-notes-jcg.zip",
+  "url": "https://github.com/foredayner/sticky-notes-jcg",
+  "bugs": "https://github.com/foredayner/sticky-notes-jcg/issues",
+  "readme": "https://github.com/foredayner/sticky-notes-jcg/blob/main/README.md"
 }

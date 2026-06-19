@@ -9,7 +9,7 @@
 import { StickyNoteStore } from "./StickyNoteStore.mjs";
 import { StickyNoteWidget } from "./StickyNoteWidget.mjs";
 
-const MODULE_ID   = "sticky-notes";
+const MODULE_ID   = "sticky-notes-jcg";
 const SOCKET_NAME = `module.${MODULE_ID}`;
 
 export class StickyNoteManager {
